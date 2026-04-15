@@ -1,0 +1,31 @@
+{
+  "scenarios": {
+    "downside": "Downside",
+    "base": "Base Case",
+    "upside": "Upside"
+  },
+  "scenarioCount": 3,
+  "defaultDecisionType": "acquisition_vs_organic",
+  "requiredMetricsList": [
+    "NPV",
+    "IRR",
+    "Payback Period",
+    "Cumulative FCF",
+    "ROI",
+    "ARR @ Month 24"
+  ],
+  "sensitivityRanges": {
+    "revenue": [-30, 30],
+    "costs": [-30, 30],
+    "growth_rate": [-30, 30],
+    "discount_rate": [-20, 20],
+    "churn_rate": [-30, 30]
+  },
+  "modelId": "gpt-4o",
+  "temperature": 0.3,
+  "maxTokens": 4096,
+  "maxRetries": 2,
+  "tableValidation": true,
+  "outputFilenamePattern": "{businessProblem}_{timestamp}.md",
+  "outputDirectory": "./outputs"
+}

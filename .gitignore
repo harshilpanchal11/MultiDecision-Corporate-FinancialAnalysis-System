@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Compiled output
+dist/
+
+# Environment variables (API keys — never commit this)
+.env
+
+# Debug logs
+debug/
+
+# Generated outputs
+outputs/
+
+# macOS metadata
+.DS_Store
+
+# TypeScript build info
+*.tsbuildinfo
