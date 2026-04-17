@@ -30,20 +30,21 @@ export function createCompletionNode(config: FinanceAnalysisConfig) {
     const missingTables = requiredTables.filter(t => !t.value || t.value.trim().length === 0);
     const hasErrors = state.errors.some(e => e.errorType === "fatal");
     
-    const sanitizedProblem = state.businessProblem
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .replace(/\s+/g, "_")
-      .substring(0, 50);
-    
+    // Convert decision_type to camelCase for filename (e.g. market_entry → marketEntry)
+    const camelDecisionType = state.decisionType.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+
+    // Extract company name: first capitalized multi-word phrase from business problem
+    const companyMatch = state.businessProblem.match(/([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)*)/);
+    const companyName = companyMatch
+      ? companyMatch[1].replace(/\s+/g, "")
+      : "Company";
+
     const timestamp = state.runMetadata.timestamp
       .replace(/[-:]/g, "")
       .replace("T", "_")
       .substring(0, 15);
-    
-    const filename = config.outputFilenamePattern
-      .replace("{businessProblem}", sanitizedProblem)
-      .replace("{timestamp}", timestamp);
+
+    const filename = `${camelDecisionType}_${companyName}_${timestamp}.md`;
     
     let markdownContent = "";
     
@@ -124,8 +125,8 @@ ${choiceHeaders}
             varName = firstLine.replace(/[#*]/g, '').trim();
           }
         }
-        if (!varName || varName.length < 3) {
-          varName = `Variable ${idx + 1}`;
+        if (!varName || varName.length < 3 || /^variable\s*\d+$/i.test(varName)) {
+          varName = `Sensitivity Variable ${idx + 1}`;
         }
         
         let cleanTable = table;
@@ -240,42 +241,78 @@ ${state.recommendationTable}
 
     const validationWarnings: string[] = [];
 
-    // CHECK 1 — FCF consistency
+    // CHECK 1 — FCF consistency (option-aware: compare within same block)
     try {
-      const extractCumulativeFCF = (text: string, label: string): number | null => {
-        const lines = text.split("\n");
-        for (const line of lines) {
+      const splitByOptionBlocks = (text: string): string[] => {
+        const parts = text.split(/\n(?=\*\*[^*]+\*\*\s*$)/m);
+        return parts.length > 0 ? parts : [text];
+      };
+
+      const extractCumulativeFCFFromBlock = (block: string): number | null => {
+        for (const line of block.split("\n")) {
           const lower = line.toLowerCase();
-          if (lower.includes("cumulative") && lower.includes("fcf")) {
-            const nums = line.match(/[-\$]?[\d,]+\.?\d*/g);
-            if (nums && nums.length > 0) {
-              const last = nums[nums.length - 1].replace(/[$,]/g, "");
-              const val = parseFloat(last);
+          if (lower.includes("cumulative") && lower.includes("fcf") && line.includes("|")) {
+            const cells = line.split("|").map(c => c.trim()).filter(Boolean);
+            const headerRow = block.split("\n").find(l => l.includes("|") && /downside|base|upside/i.test(l));
+            let baseIdx = -1;
+            if (headerRow) {
+              const headers = headerRow.split("|").map(h => h.trim().toLowerCase()).filter(Boolean);
+              baseIdx = headers.findIndex(h => h === "base");
+            }
+            if (baseIdx >= 0 && baseIdx < cells.length) {
+              const val = parseFloat(cells[baseIdx].replace(/[$,]/g, ""));
               if (!isNaN(val)) return val;
             }
+            const nums = cells.slice(1).map(c => parseFloat(c.replace(/[$,%x]/g, ""))).filter(n => !isNaN(n));
+            if (nums.length > 0) return nums[Math.min(1, nums.length - 1)];
           }
         }
         return null;
       };
-      const metricCumFCF = extractCumulativeFCF(state.metricComparisonTable, "metric");
-      const cfLines = state.cashFlowSummaryTable.split("\n").filter(l => l.includes("|"));
-      let cashFlowCumFCF: number | null = null;
-      if (cfLines.length > 2) {
-        const lastRow = cfLines[cfLines.length - 1];
+
+      const extractLastCumulativeFCFFromCashFlow = (block: string): number | null => {
+        const tableLines = block.split("\n").filter(l => l.includes("|"));
+        const headerLine = tableLines.find(l => /cumulative|period|month/i.test(l));
+        let cumIdx = -1;
+        if (headerLine) {
+          const headers = headerLine.split("|").map(h => h.trim().toLowerCase()).filter(Boolean);
+          cumIdx = headers.findIndex(h => h.includes("cumulative"));
+        }
+        const dataLines = tableLines.filter(l => !/^[\s|:-]+$/.test(l.replace(/\|/g, "").trim()) && !/metric|period|month/i.test(l));
+        if (dataLines.length === 0) return null;
+        const lastRow = dataLines[dataLines.length - 1];
         const cells = lastRow.split("|").map(c => c.trim()).filter(Boolean);
-        const lastCell = cells[cells.length - 1];
-        if (lastCell) {
-          const val = parseFloat(lastCell.replace(/[$,]/g, ""));
-          if (!isNaN(val)) cashFlowCumFCF = val;
+        if (cumIdx >= 0 && cumIdx < cells.length) {
+          const val = parseFloat(cells[cumIdx].replace(/[$,]/g, ""));
+          if (!isNaN(val)) return val;
+        }
+        if (cells.length > 0) {
+          const val = parseFloat(cells[cells.length - 1].replace(/[$,]/g, ""));
+          if (!isNaN(val)) return val;
+        }
+        return null;
+      };
+
+      const metricBlocks = splitByOptionBlocks(state.metricComparisonTable);
+      const cfBlocks = splitByOptionBlocks(state.cashFlowSummaryTable);
+      const blockCount = Math.min(metricBlocks.length, cfBlocks.length);
+
+      let fcfMismatch = false;
+      for (let i = 0; i < blockCount; i++) {
+        const metricVal = extractCumulativeFCFFromBlock(metricBlocks[i]);
+        const cfVal = extractLastCumulativeFCFFromCashFlow(cfBlocks[i]);
+        if (metricVal !== null && cfVal !== null) {
+          const avg = (Math.abs(metricVal) + Math.abs(cfVal)) / 2;
+          if (avg > 0 && Math.abs(metricVal - cfVal) / avg > 0.05) {
+            fcfMismatch = true;
+            break;
+          }
         }
       }
-      if (metricCumFCF !== null && cashFlowCumFCF !== null) {
-        const avg = (Math.abs(metricCumFCF) + Math.abs(cashFlowCumFCF)) / 2;
-        if (avg > 0 && Math.abs(metricCumFCF - cashFlowCumFCF) / avg > 0.05) {
-          validationWarnings.push(
-            "⚠ FCF CONSISTENCY WARNING: Cumulative FCF in Metric table differs from Cash Flow table by more than 5%. Review required."
-          );
-        }
+      if (fcfMismatch) {
+        validationWarnings.push(
+          "⚠ FCF CONSISTENCY WARNING: Cumulative FCF in Metric table differs from Cash Flow table by more than 5%. Review required."
+        );
       }
     } catch { /* non-fatal */ }
 
@@ -288,7 +325,7 @@ ${state.recommendationTable}
       }
     }
 
-    // CHECK 3 — Scenario variation
+    // CHECK 3 — Scenario variation (column-header-aware, direction-aware)
     try {
       const primaryMetricMap: Record<string, string> = {
         capital_budgeting: "npv",
@@ -297,23 +334,54 @@ ${state.recommendationTable}
         market_entry: "break-even",
         cost_reduction: "payback"
       };
+      const lowerIsBetter = new Set(["wacc", "payback", "break-even"]);
       const primaryKey = primaryMetricMap[state.decisionType] ?? "";
+
       if (primaryKey) {
-        const metricLines = state.metricComparisonTable.split("\n");
-        for (const line of metricLines) {
-          if (line.toLowerCase().includes(primaryKey) && line.includes("|")) {
+        const metricBlocks = state.metricComparisonTable.split(/\n(?=\*\*[^*]+\*\*\s*$)/m);
+        let variationOk = false;
+
+        for (const block of metricBlocks) {
+          const blockLines = block.split("\n").filter(l => l.includes("|"));
+          const headerLine = blockLines.find(l => /downside|base|upside/i.test(l));
+          if (!headerLine) continue;
+
+          const headers = headerLine.split("|").map(h => h.trim().toLowerCase()).filter(Boolean);
+          const dsIdx = headers.findIndex(h => h.includes("downside"));
+          const baseIdx = headers.findIndex(h => h === "base");
+          const upIdx = headers.findIndex(h => h.includes("upside"));
+          if (dsIdx < 0 || baseIdx < 0 || upIdx < 0) continue;
+
+          for (const line of blockLines) {
+            if (!line.toLowerCase().includes(primaryKey)) continue;
             const cells = line.split("|").map(c => c.trim()).filter(Boolean);
-            const nums = cells.slice(1).map(c => parseFloat(c.replace(/[$,%x]/g, ""))).filter(n => !isNaN(n));
-            if (nums.length >= 3) {
-              const [downside, base, upside] = [nums[nums.length - 3], nums[nums.length - 2], nums[nums.length - 1]];
-              if (downside >= base || upside <= base) {
-                validationWarnings.push(
-                  "⚠ SCENARIO VARIATION WARNING: Scenarios do not vary meaningfully for primary metric."
-                );
+            const dsVal = parseFloat((cells[dsIdx] ?? "").replace(/[$,%x]/g, ""));
+            const baseVal = parseFloat((cells[baseIdx] ?? "").replace(/[$,%x]/g, ""));
+            const upVal = parseFloat((cells[upIdx] ?? "").replace(/[$,%x]/g, ""));
+            if (isNaN(dsVal) || isNaN(baseVal) || isNaN(upVal)) continue;
+
+            const allDifferent = dsVal !== baseVal && baseVal !== upVal;
+            if (allDifferent) {
+              if (lowerIsBetter.has(primaryKey)) {
+                if (dsVal > baseVal && baseVal > upVal) variationOk = true;
+              } else {
+                if (dsVal < baseVal && baseVal < upVal) variationOk = true;
+              }
+              if (!variationOk) {
+                const spread = Math.abs(upVal - dsVal);
+                const avg = (Math.abs(dsVal) + Math.abs(baseVal) + Math.abs(upVal)) / 3;
+                if (avg > 0 && spread / avg > 0.05) variationOk = true;
               }
             }
             break;
           }
+          if (variationOk) break;
+        }
+
+        if (!variationOk) {
+          validationWarnings.push(
+            "⚠ SCENARIO VARIATION WARNING: Scenarios do not vary meaningfully for primary metric."
+          );
         }
       }
     } catch { /* non-fatal */ }

@@ -103,48 +103,65 @@ Use actual choice names as labels, not Option A/B.`);
           t.headers.some(h => h.toLowerCase().includes("variable change") || h.toLowerCase().includes("change"))
         );
         
-        const variableSections = responseText.split(/\*\*Variable Name:\s*/i);
         const seenVariables = new Set<string>();
+
+        // Build a unique fingerprint for each table using its first data row
+        const tablePosInResponse: number[] = [];
+        let searchFrom = 0;
+        for (const table of sensitivityTableMatches) {
+          const firstDataRow = table.rows[0];
+          // Use the first data row to locate this specific table (unique values)
+          const fingerprint = firstDataRow
+            ? `| ${firstDataRow.join(" | ")} |`
+            : `| ${table.headers.join(" | ")} |`;
+          const pos = responseText.indexOf(fingerprint, searchFrom);
+          tablePosInResponse.push(pos >= 0 ? pos : -1);
+          if (pos >= 0) searchFrom = pos + fingerprint.length;
+        }
+
+        const extractVarNameBefore = (text: string): string | null => {
+          const namePatterns: RegExp[] = [
+            /\*\*Variable Name:\s*([^*\n]+)\*\*/g,
+            /\*\*([^*\n]{3,})\*\*\s*$/gm,
+            /###\s+([^\n]{3,})/g,
+            /\n([A-Z][A-Za-z][^\n|*#]{1,60})\s*\n/g,
+          ];
+          for (const pattern of namePatterns) {
+            let lastMatch: RegExpExecArray | null = null;
+            let m: RegExpExecArray | null;
+            while ((m = pattern.exec(text)) !== null) { lastMatch = m; }
+            if (lastMatch && lastMatch[1]) {
+              const candidate = lastMatch[1].trim().replace(/[:\-]+$/, "").trim();
+              const isGeneric = /^variable\s*\d+$/i.test(candidate);
+              const isHeader = /^change|metric|scenario|unit|primary|secondary/i.test(candidate);
+              if (candidate.length >= 3 && !isGeneric && !isHeader) return candidate;
+            }
+          }
+          return null;
+        };
         
         for (let i = 0; i < sensitivityTableMatches.length; i++) {
           const table = sensitivityTableMatches[i];
           const tableMarkdown = `| ${table.headers.join(" | ")} |\n|${table.headers.map(() => "---").join("|")}|\n${table.rows.map(r => `| ${r.join(" | ")} |`).join("\n")}`;
           
           let varName = `Variable ${i + 1}`;
+          const tablePos = tablePosInResponse[i];
           
-          for (let j = 1; j < variableSections.length; j++) {
-            const section = variableSections[j];
-            const nameMatch = section.match(/^([^*\n|]+)/);
-            if (nameMatch) {
-              const candidateName = nameMatch[1].trim();
-              if (section.includes(table.headers[0]) && !seenVariables.has(candidateName)) {
-                varName = candidateName;
-                break;
-              }
+          if (tablePos > 0) {
+            // Look between previous table's position (or start) and this table
+            const prevEnd = i > 0 && tablePosInResponse[i - 1] >= 0
+              ? tablePosInResponse[i - 1] + 20
+              : 0;
+            const beforeTable = responseText.substring(Math.max(0, prevEnd), tablePos);
+            
+            const candidate = extractVarNameBefore(beforeTable);
+            if (candidate && !seenVariables.has(candidate)) {
+              varName = candidate;
             }
           }
           
           if (varName !== `Variable ${i + 1}`) {
             seenVariables.add(varName);
-          }
-          
-          // Fallback: search backwards from table
-          if (varName === `Variable ${i + 1}`) {
-            const tableStart = responseText.indexOf(tableMarkdown.split('\n')[0]);
-            if (tableStart > 0) {
-              const beforeTable = responseText.substring(Math.max(0, tableStart - 500), tableStart);
-              const namePatterns = [/\*\*Variable Name:\s*([^*]+)\*\*/i, /Variable Name:\s*([^\n|]+)/i];
-              for (const pattern of namePatterns) {
-                const matches = beforeTable.matchAll(new RegExp(pattern.source, 'gi'));
-                let lastMatch = null;
-                for (const match of matches) { lastMatch = match; }
-                if (lastMatch && lastMatch[1] && !seenVariables.has(lastMatch[1].trim())) {
-                  varName = lastMatch[1].trim();
-                  seenVariables.add(varName);
-                  break;
-                }
-              }
-            }
           }
           
           sensitivityTables.push(`**Variable Name: ${varName}**\n\n${tableMarkdown}`);

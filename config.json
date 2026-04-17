@@ -26,6 +26,6 @@
   "maxTokens": 4096,
   "maxRetries": 2,
   "tableValidation": true,
-  "outputFilenamePattern": "{businessProblem}_{timestamp}.md",
+  "outputFilenamePattern": "{decisionType}_{companyName}_{timestamp}.md",
   "outputDirectory": "./outputs"
 }

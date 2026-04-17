@@ -66,7 +66,13 @@ IF options.type is 'multi':
 UNIVERSAL RULES:
 - Recommendation table must have EXACTLY 1 row always
 - Never use "Option A" or "Option B" in any cell
-- Output ONLY the two tables, no narrative, no code blocks`);
+- Output ONLY the two tables, no narrative, no code blocks
+
+REQUIRED FIELD QUALITY (applies to EVERY recommendation row):
+- Required Conditions: MUST list 2-4 concrete, measurable conditions (metric thresholds, milestones, or governance triggers). NEVER write "N/A", "None", or "-".
+  Even for a NO decision, state what conditions WOULD need to change to reverse the decision (e.g. "ARR growth exceeds 25% for two consecutive quarters", "Cash burn falls below $1.5M/month").
+- Deal-Breakers: MUST list 2-3 specific events or metric failures that would invalidate the recommendation (e.g. "Covenant breach within 12 months", "Customer churn exceeds 20%"). NEVER write "N/A", "None", or "-".
+- Monitoring Metrics: MUST list 3-5 specific named metrics with frequency (e.g. "ARR (monthly), Cash Burn (weekly), NRR (quarterly)"). NEVER write just metric names without frequency.`);
 
     const userMessage = new HumanMessage(`Strategic Objective: ${state.strategicObjective}
 Decision Type: ${state.decisionType}
@@ -176,6 +182,32 @@ Never use Option A or Option B.`);
           if (!hasChoiceRef && retryCount < config.maxRetries) {
             throw new Error(`Recommendation must explicitly name one of the choices: ${choiceNames.join(", ")}`);
           }
+        }
+
+        // Validate that Required Conditions, Deal-Breakers, Monitoring Metrics are substantive
+        const emptyValues = new Set(["n/a", "na", "none", "not applicable", "-", "--", "tbd", ""]);
+        const qualityFields = ["required conditions", "deal-breakers", "deal breakers", "monitoring metrics"];
+        const headersLower = recTable.headers.map(h => h.toLowerCase().trim());
+        const row = recTable.rows[0];
+        const emptyFieldNames: string[] = [];
+
+        for (const field of qualityFields) {
+          const colIdx = headersLower.findIndex(h => h.includes(field) || field.includes(h));
+          if (colIdx >= 0 && row[colIdx]) {
+            const cellValue = row[colIdx].trim().toLowerCase();
+            if (emptyValues.has(cellValue) || cellValue.length < 10) {
+              emptyFieldNames.push(recTable.headers[colIdx]);
+            }
+          }
+        }
+
+        if (emptyFieldNames.length > 0 && retryCount < config.maxRetries) {
+          throw new Error(
+            `Recommendation fields must be substantive (not N/A or empty): ${emptyFieldNames.join(", ")}. ` +
+            `Provide 2-4 concrete, measurable items for each field.`
+          );
+        } else if (emptyFieldNames.length > 0) {
+          warn(`Decision Node: Thin content in recommendation fields: ${emptyFieldNames.join(", ")}`);
         }
         
         log("Decision Node: Successfully generated recommendation");

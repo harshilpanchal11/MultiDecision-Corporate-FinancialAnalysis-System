@@ -5,24 +5,24 @@ const isDevelopment = process.env.NODE_ENV === "development";
 const DEBUG_LLM = process.env.DEBUG_LLM === "true" || isDevelopment;
 
 /**
- * Save LLM responses to file for debugging
+ * Save LLM responses to file for debugging.
+ * Only active when DEBUG_LLM_FILES=true is explicitly set.
  */
 async function saveLLMResponse(nodeId: string, responseText: string, attempt: number): Promise<void> {
-  if (!DEBUG_LLM) return;
-  
+  if (process.env.DEBUG_LLM_FILES !== "true") return;
+
   try {
     const fs = await import("fs/promises");
     const path = await import("path");
     const debugDir = path.join(process.cwd(), "debug");
     await fs.mkdir(debugDir, { recursive: true });
-    
+
     const filename = `${nodeId}_attempt_${attempt}_${Date.now()}.txt`;
     const filepath = path.join(debugDir, filename);
     await fs.writeFile(filepath, responseText, "utf-8");
     console.log(`[DEBUG] Saved LLM response to: ${filepath}`);
   } catch (err) {
     console.error(`[DEBUG] Failed to save LLM response: ${err}`);
-    // Silently fail - debug logging shouldn't break execution
   }
 }
 

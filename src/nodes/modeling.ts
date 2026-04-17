@@ -86,6 +86,7 @@ UNIVERSAL RULES FOR ALL OUTPUT:
 - Cumulative FCF at final period in Cash Flow table MUST equal
   Cumulative FCF in Metric Comparison table for Base scenario.
   Double-check this before producing output.
+- Cash Flow Summary table must have fixed format (e.g. $2.45M, -$35.48M, -$3M)
 - ROI must always be expressed as a ratio (e.g. 1.8x), never as $
 - Use realistic figures with decimals — e.g. $2.34M not $2M,
   17.3% not 15%, 2.3 years not 2 years.

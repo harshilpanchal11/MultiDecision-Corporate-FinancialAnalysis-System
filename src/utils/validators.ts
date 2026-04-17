@@ -173,26 +173,33 @@ export function validateSensitivityVariables(
     return { valid: false, errors: ["No assumption table found"] };
   }
   
-  const assumptionVars = assumptionTables[0].rows.map(row => 
-    row[0]?.toLowerCase().trim() || ""
-  );
+  const assumptionVars = assumptionTables.flatMap(t =>
+    t.rows.map(row => row[0]?.toLowerCase().trim() || "")
+  ).filter(v => v.length > 0);
   
   for (const sensTable of sensitivityTables) {
-    // Extract variable name from sensitivity table
     const varNameMatch = sensTable.match(/\*\*Variable Name:\s*([^*]+)\*\*/i) ||
                          sensTable.match(/Variable Name:\s*([^\n]+)/i) ||
                          sensTable.match(/###\s*([^\n]+)/);
     
     if (varNameMatch) {
-      const varName = varNameMatch[1].toLowerCase().trim();
-      // Check if any assumption variable matches (fuzzy match)
-      const matches = assumptionVars.some(av => 
-        av.includes(varName) || varName.includes(av) ||
-        av.replace(/\s+/g, "").includes(varName.replace(/\s+/g, ""))
-      );
+      const rawName = varNameMatch[1].trim();
+      if (/^(variable|sensitivity variable)\s*\d+$/i.test(rawName)) {
+        errors.push(`Sensitivity variable "${rawName}" not found in assumptions table`);
+        continue;
+      }
+      const varName = rawName.toLowerCase();
+      const varWords = varName.replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 2);
+      const matches = assumptionVars.some(av => {
+        if (av.includes(varName) || varName.includes(av)) return true;
+        if (av.replace(/\s+/g, "").includes(varName.replace(/\s+/g, ""))) return true;
+        const avWords = av.replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 2);
+        const shared = varWords.filter(w => avWords.includes(w));
+        return shared.length >= Math.min(2, varWords.length) && shared.length > 0;
+      });
       
       if (!matches) {
-        errors.push(`Sensitivity variable "${varNameMatch[1]}" not found in assumptions table`);
+        errors.push(`Sensitivity variable "${rawName}" not found in assumptions table`);
       }
     }
   }

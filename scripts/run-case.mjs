@@ -38,14 +38,14 @@ const EXTRACTION_PROMPT = `You are helping prepare inputs for a corporate financ
 From the case study below, extract EXACTLY three strings that will be used as CLI arguments.
 
 STRING 1 — BUSINESS PROBLEM:
-- 1-2 sentences maximum
-- Must capture: WHO the company is, WHAT decision or challenge they face, the KEY CONSTRAINT (budget, burn, timeline, risk), and the END GOAL (revenue, market share, ARR, etc.)
+- 2-3 sentences maximum
+- Must capture: WHO the company is, WHAT decision or challenge they face, the KEY CONSTRAINT (budget, burn, timeline, risk, interest rate, etc.), and the END GOAL (revenue, market share, ARR, etc.)
 - Do NOT force a rigid format — let the language flow naturally from what the case study actually says
 - If the case study involves comparing two options, name both options naturally in the sentence
 - If it is a single path decision (e.g. should we enter this market), frame it as an evaluation
 
 STRING 2 — STRATEGIC OBJECTIVE:
-- 1 sentence maximum
+- 2 sentence maximum
 - Must include ALL measurable success criteria from the case study (numbers, %, $, timeframes)
 - Do NOT force a rigid format — write it as a natural objective statement that reflects the case study's actual goals
 - If multiple criteria exist (e.g. market share AND profitability AND timeline), include all of them
