@@ -1,0 +1,12 @@
+=== BUSINESS_PROBLEM ===
+NovaTerra Energy Systems, Inc., a grid-scale battery storage company, faces a decision on how to finance a $65.0 million expansion of its manufacturing capacity. The key constraint is the company's current runway of 13.5 months, requiring financing to close by Q3 2026 to avoid a distressed raise. The end goal is to maximize long-term per-share equity value while preserving operational flexibility and appropriately allocating financial risk.
+
+=== STRATEGIC_OBJECTIVE ===
+Bring Plant II to full 1.6 GWh/year capacity by Q1 2028, achieving ≥75% utilization within 12 months. Achieve $238.0 million in revenue by Year 3 and $286.0 million by Year 4, with positive EBITDA by FY 2027. Preserve founders' ownership above 22% post-transaction and maintain a minimum DSCR of 1.5x under a 20% EBITDA haircut stress scenario.
+
+=== DECISION_TYPE ===
+debt_vs_equity
+
+=== METADATA ===
+approved_at=2026-04-28T02:26:38.855Z
+source_case_file=CS-2026-112_NovaTerra_DebtVsEquity.md

@@ -12,8 +12,8 @@
  *   node scripts/run-case.mjs ../TEST_CASES/CASE_STUDY_CloudSync_AgentVersion.md
  */
 
-import { readFile } from "fs/promises";
-import { resolve, dirname } from "path";
+import { readFile, writeFile, mkdir } from "fs/promises";
+import { resolve, dirname, join, basename } from "path";
 import { fileURLToPath } from "url";
 import { createInterface } from "readline";
 import { exec } from "child_process";
@@ -22,6 +22,7 @@ import OpenAI from "openai";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
+const INPUTS_DIR = resolve(PROJECT_ROOT, "inputs");
 
 dotenv.config({ path: resolve(PROJECT_ROOT, ".env") });
 
@@ -85,6 +86,68 @@ function printField(label, value) {
 
 function shellEscape(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+function camelDecisionType(dt) {
+  return dt.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+function pascalCompanyName(businessProblem) {
+  const m = businessProblem.match(/([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)*)/);
+  return m ? m[1].replace(/\s+/g, "") : "Company";
+}
+
+function timestampNow() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+function buildInputFilename(decisionType, businessProblem) {
+  return `approved_inputs_${camelDecisionType(decisionType)}_${pascalCompanyName(businessProblem)}_${timestampNow()}.txt`;
+}
+
+async function saveApprovedInputs(filepath, bp, so, dt, sourceCase) {
+  const content = [
+    "=== BUSINESS_PROBLEM ===",
+    bp,
+    "",
+    "=== STRATEGIC_OBJECTIVE ===",
+    so,
+    "",
+    "=== DECISION_TYPE ===",
+    dt,
+    "",
+    "=== METADATA ===",
+    `approved_at=${new Date().toISOString()}`,
+    `source_case_file=${sourceCase}`,
+    ""
+  ].join("\n");
+  await mkdir(dirname(filepath), { recursive: true });
+  await writeFile(filepath, content, "utf-8");
+}
+
+async function readApprovedInputs(filepath) {
+  const text = await readFile(filepath, "utf-8");
+  const sections = {};
+  let current = null;
+  let buffer = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(/^=== (.+) ===$/);
+    if (m) {
+      if (current) sections[current] = buffer.join("\n").trim();
+      current = m[1];
+      buffer = [];
+    } else if (current) {
+      buffer.push(line);
+    }
+  }
+  if (current) sections[current] = buffer.join("\n").trim();
+  return {
+    businessProblem: sections.BUSINESS_PROBLEM ?? "",
+    strategicObjective: sections.STRATEGIC_OBJECTIVE ?? "",
+    decisionType: sections.DECISION_TYPE ?? ""
+  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────
@@ -184,18 +247,15 @@ async function main() {
   printField("Decision Type", decision_type);
   printDivider();
 
-  const cmd = `npm start -- ${shellEscape(business_problem)} ${shellEscape(strategic_objective)} ${shellEscape(decision_type)}`;
+  const previewCmd = `npm start -- ${shellEscape(business_problem)} ${shellEscape(strategic_objective)} ${shellEscape(decision_type)}`;
 
   console.log("\n\x1b[90mCommand that will be executed:\x1b[0m");
-  console.log(`  ${cmd}\n`);
+  console.log(`  ${previewCmd}\n`);
 
   // 8. Approval loop
-  let finalCmd = cmd;
   const approval = await ask("Approve and run? (y/n): ");
 
-  if (approval.toLowerCase() === "y") {
-    // proceed with extracted command
-  } else {
+  if (approval.toLowerCase() !== "y") {
     console.log("\nYou can edit any field below. Press Enter to keep the current value.\n");
 
     const editedBp = await ask(`Business Problem [Enter to keep]:\n  > `);
@@ -213,22 +273,45 @@ async function main() {
       decision_type = editedDt;
     }
 
-    finalCmd = `npm start -- ${shellEscape(business_problem)} ${shellEscape(strategic_objective)} ${shellEscape(decision_type)}`;
-
     printDivider();
-    console.log("\x1b[33m  UPDATED COMMAND\x1b[0m\n");
-    console.log(`  ${finalCmd}\n`);
+    console.log("\x1b[33m  UPDATED INPUTS\x1b[0m\n");
+    printField("Business Problem", business_problem);
+    console.log();
+    printField("Strategic Objective", strategic_objective);
+    console.log();
+    printField("Decision Type", decision_type);
     printDivider();
 
-    const confirm = await ask("Run this command? (y/n): ");
+    const confirm = await ask("Run with these inputs? (y/n): ");
     if (confirm.toLowerCase() !== "y") {
       console.log("Aborted.");
       process.exit(0);
     }
   }
 
-  // 9. Execute
-  console.log("\nStarting multi-agent pipeline...\n");
+  // 9. Save approved inputs to a .txt file
+  const inputFilename = buildInputFilename(decision_type, business_problem);
+  const inputFilePath = join(INPUTS_DIR, inputFilename);
+  await saveApprovedInputs(
+    inputFilePath,
+    business_problem,
+    strategic_objective,
+    decision_type,
+    basename(absPath)
+  );
+  console.log(`\nApproved inputs saved to: ${inputFilePath}`);
+
+  // 10. Read inputs back from the saved file (single source of truth)
+  const loaded = await readApprovedInputs(inputFilePath);
+  if (!loaded.businessProblem || !loaded.strategicObjective || !VALID_DECISION_TYPES.includes(loaded.decisionType)) {
+    console.error(`Failed to load valid inputs from saved file: ${inputFilePath}`);
+    process.exit(1);
+  }
+
+  const finalCmd = `npm start -- ${shellEscape(loaded.businessProblem)} ${shellEscape(loaded.strategicObjective)} ${shellEscape(loaded.decisionType)}`;
+
+  // 11. Execute pipeline using the inputs read from the saved file
+  console.log("\nStarting multi-agent pipeline (inputs loaded from saved file)...\n");
 
   const child = exec(finalCmd, { cwd: PROJECT_ROOT, maxBuffer: 50 * 1024 * 1024 });
 
